@@ -10,14 +10,14 @@ st.set_page_config(page_title="Product Scenario Tool", layout="wide")
 # Data
 # ----------------------------
 BASE_DATA = [
-    {"Product":"Ready-made library sequencing","Contribution/unit (SEK)":9825,"Base units":6881,"Price/unit (SEK)":14000,"Cost/unit (SEK)":4175},
-    {"Product":"Human WGS (library + sequencing)","Contribution/unit (SEK)":1563,"Base units":0,"Price/unit (SEK)":4200,"Cost/unit (SEK)":2637},
+    {"Product":"Ready-made library sequencing","Contribution/unit (SEK)":9825,"Base units":4,"Price/unit (SEK)":14000,"Cost/unit (SEK)":4175},
+    {"Product":"Human WGS (library + sequencing)","Contribution/unit (SEK)":1563,"Base units":180,"Price/unit (SEK)":4200,"Cost/unit (SEK)":2637},
     {"Product":"Bacterial transcriptome","Contribution/unit (SEK)":1200,"Base units":0,"Price/unit (SEK)":2200,"Cost/unit (SEK)":1000},
     {"Product":"Metagenome – Bulk +10% Price","Contribution/unit (SEK)":685,"Base units":0,"Price/unit (SEK)":990,"Cost/unit (SEK)":305},
     {"Product":"Metagenome – +20% Price","Contribution/unit (SEK)":670,"Base units":0,"Price/unit (SEK)":1080,"Cost/unit (SEK)":410},
     {"Product":"Metagenome – Bulk Pricing","Contribution/unit (SEK)":595,"Base units":0,"Price/unit (SEK)":900,"Cost/unit (SEK)":305},
     {"Product":"Metagenome – +10% Price","Contribution/unit (SEK)":580,"Base units":0,"Price/unit (SEK)":990,"Cost/unit (SEK)":410},
-    {"Product":"Metagenome – Base (Optimized)","Contribution/unit (SEK)":490,"Base units":991,"Price/unit (SEK)":900,"Cost/unit (SEK)":410},
+    {"Product":"Metagenome – Base (Optimized)","Contribution/unit (SEK)":490,"Base units":1061,"Price/unit (SEK)":900,"Cost/unit (SEK)":410},
     {"Product":"FFPE extraction","Contribution/unit (SEK)":300,"Base units":0,"Price/unit (SEK)":350,"Cost/unit (SEK)":50},
     {"Product":"Bacterial DNA extraction","Contribution/unit (SEK)":100,"Base units":0,"Price/unit (SEK)":150,"Cost/unit (SEK)":50},
     {"Product":"DNA extraction","Contribution/unit (SEK)":60,"Base units":0,"Price/unit (SEK)":100,"Cost/unit (SEK)":40},
@@ -37,7 +37,7 @@ GROUPS = {
     "Extraction": ["FFPE extraction", "Bacterial DNA extraction", "DNA extraction"],
 }
 
-FIXED_COST_DEFAULT = 4_800_000
+FIXED_COST_DEFAULT = 2_000_000
 
 def compute(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
