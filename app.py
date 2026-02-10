@@ -72,6 +72,9 @@ if "active_scenario" not in st.session_state:
 if "fixed_cost" not in st.session_state:
     st.session_state.fixed_cost = FIXED_COST_DEFAULT
 
+if "show_breakeven_view" not in st.session_state:
+    st.session_state.show_breakeven_view = True
+
 # ----------------------------
 # Header
 # ----------------------------
@@ -93,6 +96,12 @@ with left:
         value=int(st.session_state.fixed_cost),
         step=50_000,
         help="Breakeven threshold: Contribution Profit must exceed Fixed costs for Net Profit to be positive.",
+    )
+
+    st.session_state.show_breakeven_view = st.toggle(
+        "Show breakeven (cumulative) main chart",
+        value=bool(st.session_state.show_breakeven_view),
+        help="ON: main chart shows cumulative contribution vs fixed costs. OFF: main chart shows profit by product.",
     )
 
     st.divider()
@@ -232,9 +241,8 @@ with right:
     total_var_cost = float(df_calc["Variable Cost (SEK)"].sum())
     total_contrib = float(df_calc["Contribution Profit (SEK)"].sum())
     net_profit = total_contrib - fixed_cost
-    overall_margin = (total_contrib / total_revenue) if total_revenue else 0.0
+    contrib_margin = (total_contrib / total_revenue) if total_revenue else 0.0
     net_margin = (net_profit / total_revenue) if total_revenue else 0.0
-
     breakeven = total_contrib >= fixed_cost
 
     k1, k2, k3, k4 = st.columns(4)
@@ -247,20 +255,83 @@ with right:
         delta=("Above breakeven" if breakeven else "Below breakeven"),
     )
 
-    st.caption(f"Scenario: **{st.session_state.active_scenario}** · Net margin: **{net_margin:.1%}** · Contribution margin: **{overall_margin:.1%}**")
+    st.caption(
+        f"Scenario: **{st.session_state.active_scenario}** · "
+        f"Net margin: **{net_margin:.1%}** · Contribution margin: **{contrib_margin:.1%}**"
+    )
 
     st.divider()
 
-    # Profit by product (contribution profit)
-    chart_df = df_calc.sort_values("Contribution Profit (SEK)", ascending=False)
-    fig_profit = px.bar(
-        chart_df,
-        x="Product",
-        y="Contribution Profit (SEK)",
-        title="Contribution Profit by Product",
-    )
-    fig_profit.update_layout(xaxis_tickangle=-35, height=420, margin=dict(l=20, r=20, t=60, b=120))
-    st.plotly_chart(fig_profit, use_container_width=True)
+    # Prepare sorted view
+    chart_df = df_calc.sort_values("Contribution Profit (SEK)", ascending=False).copy()
+
+    # MAIN CHART: Toggle between breakeven (cumulative) vs simple profit-by-product
+    if st.session_state.show_breakeven_view:
+        cum_df = chart_df[chart_df["Contribution Profit (SEK)"] > 0].copy()
+        cum_df["Cumulative Contribution (SEK)"] = cum_df["Contribution Profit (SEK)"].cumsum()
+
+        fig_main = go.Figure()
+        fig_main.add_trace(go.Bar(
+            x=cum_df["Product"],
+            y=cum_df["Contribution Profit (SEK)"],
+            name="Contribution Profit (SEK)"
+        ))
+        fig_main.add_trace(go.Scatter(
+            x=cum_df["Product"],
+            y=cum_df["Cumulative Contribution (SEK)"],
+            name="Cumulative Contribution (SEK)",
+            yaxis="y2"
+        ))
+
+        # Fixed cost threshold line on cumulative axis
+        fig_main.add_shape(
+            type="line",
+            x0=-0.5, x1=max(len(cum_df["Product"]) - 0.5, 0.5),
+            y0=fixed_cost, y1=fixed_cost,
+            xref="x", yref="y2",
+            line=dict(dash="dash", width=2),
+        )
+        fig_main.add_annotation(
+            x=0, y=fixed_cost,
+            xref="x", yref="y2",
+            text=f"Fixed costs (breakeven): {fixed_cost:,.0f} SEK",
+            showarrow=False,
+            xanchor="left",
+            yanchor="bottom",
+        )
+
+        # Annotate first product where cumulative crosses breakeven
+        cross = cum_df.index[cum_df["Cumulative Contribution (SEK)"] >= fixed_cost].tolist()
+        if cross:
+            first_idx = cross[0]
+            be_prod = cum_df.loc[first_idx, "Product"]
+            be_val = float(cum_df.loc[first_idx, "Cumulative Contribution (SEK)"])
+            fig_main.add_annotation(
+                x=be_prod, y=be_val,
+                xref="x", yref="y2",
+                text=f"Breakeven reached at: {be_prod}",
+                showarrow=True, arrowhead=2, ax=20, ay=-40
+            )
+
+        fig_main.update_layout(
+            title="Cumulative Contribution vs Fixed Costs (Breakeven View)",
+            height=440,
+            margin=dict(l=20, r=20, t=60, b=120),
+            xaxis=dict(tickangle=-35),
+            yaxis=dict(title="SEK (per product)"),
+            yaxis2=dict(title="Cumulative SEK", overlaying="y", side="right"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_main, use_container_width=True)
+    else:
+        fig_profit = px.bar(
+            chart_df,
+            x="Product",
+            y="Contribution Profit (SEK)",
+            title="Contribution Profit by Product",
+        )
+        fig_profit.update_layout(xaxis_tickangle=-35, height=440, margin=dict(l=20, r=20, t=60, b=120))
+        st.plotly_chart(fig_profit, use_container_width=True)
 
     # Waterfall: Revenue -> Variable Cost -> Fixed Cost -> Net Profit
     fig_wf = go.Figure(go.Waterfall(
@@ -288,7 +359,6 @@ with right:
     else:
         pareto["Cumulative Profit (SEK)"] = pareto["Contribution Profit (SEK)"].cumsum()
 
-        # Find breakeven point in cumulative terms
         idx_be = pareto.index[pareto["Cumulative Profit (SEK)"] >= fixed_cost].tolist()
         be_product = None
         be_value = None
