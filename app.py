@@ -11,14 +11,14 @@ st.set_page_config(page_title="Product Scenario Tool", layout="wide")
 # Data
 # ----------------------------
 BASE_DATA = [
-    {"Product":"Ready-made library sequencing","Contribution/unit (SEK)":9825,"Base units":4,"Price/unit (SEK)":14000,"Cost/unit (SEK)":4175},
-    {"Product":"Human WGS (library + sequencing)","Contribution/unit (SEK)":1563,"Base units":180,"Price/unit (SEK)":4200,"Cost/unit (SEK)":2637},
+    {"Product":"Ready-made library sequencing","Contribution/unit (SEK)":9825,"Base units":6881,"Price/unit (SEK)":14000,"Cost/unit (SEK)":4175},
+    {"Product":"Human WGS (library + sequencing)","Contribution/unit (SEK)":1563,"Base units":0,"Price/unit (SEK)":4200,"Cost/unit (SEK)":2637},
     {"Product":"Bacterial transcriptome","Contribution/unit (SEK)":1200,"Base units":0,"Price/unit (SEK)":2200,"Cost/unit (SEK)":1000},
     {"Product":"Metagenome – Bulk +10% Price","Contribution/unit (SEK)":685,"Base units":0,"Price/unit (SEK)":990,"Cost/unit (SEK)":305},
     {"Product":"Metagenome – +20% Price","Contribution/unit (SEK)":670,"Base units":0,"Price/unit (SEK)":1080,"Cost/unit (SEK)":410},
     {"Product":"Metagenome – Bulk Pricing","Contribution/unit (SEK)":595,"Base units":0,"Price/unit (SEK)":900,"Cost/unit (SEK)":305},
     {"Product":"Metagenome – +10% Price","Contribution/unit (SEK)":580,"Base units":0,"Price/unit (SEK)":990,"Cost/unit (SEK)":410},
-    {"Product":"Metagenome – Base (Optimized)","Contribution/unit (SEK)":490,"Base units":1061,"Price/unit (SEK)":900,"Cost/unit (SEK)":410},
+    {"Product":"Metagenome – Base (Optimized)","Contribution/unit (SEK)":490,"Base units":991,"Price/unit (SEK)":900,"Cost/unit (SEK)":410},
     {"Product":"FFPE extraction","Contribution/unit (SEK)":300,"Base units":0,"Price/unit (SEK)":350,"Cost/unit (SEK)":50},
     {"Product":"Bacterial DNA extraction","Contribution/unit (SEK)":100,"Base units":0,"Price/unit (SEK)":150,"Cost/unit (SEK)":50},
     {"Product":"DNA extraction","Contribution/unit (SEK)":60,"Base units":0,"Price/unit (SEK)":100,"Cost/unit (SEK)":40},
@@ -38,7 +38,7 @@ GROUPS = {
     "Extraction": ["FFPE extraction", "Bacterial DNA extraction", "DNA extraction"],
 }
 
-FIXED_COST_DEFAULT = 2_800_000
+FIXED_COST_DEFAULT = 4_800_000
 
 def compute(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -74,11 +74,6 @@ if "fixed_cost" not in st.session_state:
 
 if "show_breakeven_view" not in st.session_state:
     st.session_state.show_breakeven_view = True
-
-if "breakeven_product" not in st.session_state:
-    # default to highest contribution/unit
-    p = BASE_DF.sort_values("Contribution/unit (SEK)", ascending=False)["Product"].iloc[0]
-    st.session_state.breakeven_product = p
 
 # ----------------------------
 # Slider/number sync callbacks
@@ -123,13 +118,11 @@ with left:
 
     st.divider()
 
-    # Scenario tabs
     tab_base, tab_cons, tab_aggr = st.tabs(["Base", "Conservative", "Aggressive"])
 
     def apply_scenario(name: str, mult: float):
         st.session_state.units = scenario_units(mult)
         st.session_state.active_scenario = name
-        # sync widget states
         for p, v in st.session_state.units.items():
             st.session_state[f"sl_{safe_key(p)}"] = v
             st.session_state[f"num_{safe_key(p)}"] = v
@@ -219,7 +212,6 @@ with left:
 
     st.divider()
 
-    # Save/load scenarios
     cA, cB, cC = st.columns(3)
     with cA:
         if st.button("Reset to baseline", use_container_width=True):
@@ -272,41 +264,45 @@ with right:
     net_margin = (net_profit / total_revenue) if total_revenue else 0.0
     breakeven = total_contrib >= fixed_cost
 
-    # ---- NEW: Units missing to reach breakeven (chosen product) ----
     shortfall = max(0.0, fixed_cost - total_contrib)
-
-    st.session_state.breakeven_product = st.selectbox(
-        "Breakeven driver product (calculate missing units if you add more of this item)",
-        options=list(BASE_DF["Product"]),
-        index=list(BASE_DF["Product"]).index(st.session_state.breakeven_product),
-    )
-
-    contrib_per_unit = float(BASE_DF.loc[BASE_DF["Product"] == st.session_state.breakeven_product, "Contribution/unit (SEK)"].iloc[0])
-    units_needed = None
-    if shortfall <= 0:
-        units_needed = 0
-    elif contrib_per_unit > 0:
-        units_needed = int(math.ceil(shortfall / contrib_per_unit))
-    else:
-        units_needed = None  # not meaningful if contribution/unit <= 0
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Total Revenue (SEK)", f"{total_revenue:,.0f}")
     k2.metric("Variable Cost (SEK)", f"{total_var_cost:,.0f}")
     k3.metric("Contribution Profit (SEK)", f"{total_contrib:,.0f}", delta=f"Breakeven: {fixed_cost:,.0f}")
-    k4.metric(
-        "Net Profit after Fixed (SEK)",
-        f"{net_profit:,.0f}",
-        delta=("Above breakeven" if breakeven else "Below breakeven"),
+    k4.metric("Net Profit after Fixed (SEK)", f"{net_profit:,.0f}", delta=("Above breakeven" if breakeven else "Below breakeven"))
+
+    # ----------------------------
+    # NEW: Units needed by product to reach breakeven
+    # ----------------------------
+    units_needed_df = BASE_DF[["Product", "Contribution/unit (SEK)"]].copy()
+    units_needed_df["Breakeven shortfall (SEK)"] = shortfall
+
+    def units_needed(contrib_per_unit: float, shortfall_: float):
+        if shortfall_ <= 0:
+            return 0
+        if contrib_per_unit <= 0:
+            return None
+        return int(math.ceil(shortfall_ / contrib_per_unit))
+
+    units_needed_df["Units needed to breakeven"] = units_needed_df["Contribution/unit (SEK)"].apply(
+        lambda c: units_needed(float(c), shortfall)
     )
 
-    # breakeven gap KPI
-    c1, c2 = st.columns(2)
+    # “Best lever” = min units needed among valid
+    candidates = units_needed_df.dropna(subset=["Units needed to breakeven"]).copy()
+    best = None
+    if len(candidates):
+        best = candidates.sort_values("Units needed to breakeven", ascending=True).iloc[0]
+
+    c1, c2, c3 = st.columns([0.34, 0.33, 0.33])
     c1.metric("Breakeven shortfall (SEK)", f"{shortfall:,.0f}")
-    if units_needed is None:
-        c2.metric("Units needed (selected product)", "N/A")
+    if best is not None:
+        c2.metric("Fastest breakeven lever", str(best["Product"]))
+        c3.metric("Units needed (that product)", f"{int(best['Units needed to breakeven']):,}")
     else:
-        c2.metric("Units needed (selected product)", f"{units_needed:,}")
+        c2.metric("Fastest breakeven lever", "N/A")
+        c3.metric("Units needed", "N/A")
 
     st.caption(
         f"Scenario: **{st.session_state.active_scenario}** · "
@@ -352,13 +348,9 @@ with right:
             be_val = float(cum_df.loc[first_idx, "Cumulative Contribution (SEK)"])
             xvals = list(cum_df["Product"])
             be_pos = xvals.index(be_prod)
-            fig_cum.add_vrect(
-                x0=be_pos - 0.5, x1=be_pos + 0.5,
-                fillcolor="lightgreen", opacity=0.18, line_width=0
-            )
+            fig_cum.add_vrect(x0=be_pos - 0.5, x1=be_pos + 0.5, fillcolor="lightgreen", opacity=0.18, line_width=0)
             fig_cum.add_annotation(
-                x=be_prod, y=be_val,
-                xref="x", yref="y2",
+                x=be_prod, y=be_val, xref="x", yref="y2",
                 text=f"Breakeven reached at: {be_prod}",
                 showarrow=True, arrowhead=2, ax=20, ay=-40
             )
@@ -383,14 +375,8 @@ with right:
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
         st.plotly_chart(fig_cum, use_container_width=True)
-
     else:
-        fig_profit = px.bar(
-            chart_df,
-            x="Product",
-            y="Contribution Profit (SEK)",
-            title="Contribution Profit by Product",
-        )
+        fig_profit = px.bar(chart_df, x="Product", y="Contribution Profit (SEK)", title="Contribution Profit by Product")
         fig_profit.update_layout(xaxis_tickangle=-35, height=440, margin=dict(l=20, r=20, t=60, b=120))
         st.plotly_chart(fig_profit, use_container_width=True)
 
@@ -410,26 +396,27 @@ with right:
     )
     st.plotly_chart(fig_wf, use_container_width=True)
 
+    # ---- Units needed table (all products) ----
+    with st.expander("Units needed to reach breakeven (by product)", expanded=True):
+        show_units = units_needed_df.copy()
+        # nicer display: move Nones to bottom and sort by units needed
+        show_units["Units needed (sort)"] = show_units["Units needed to breakeven"].apply(lambda x: x if x is not None else 10**18)
+        show_units = show_units.sort_values("Units needed (sort)", ascending=True).drop(columns=["Units needed (sort)"])
+        st.dataframe(show_units, use_container_width=True, hide_index=True)
+
+        # quick download
+        csv = show_units.to_csv(index=False).encode("utf-8")
+        st.download_button("Download table (CSV)", data=csv, file_name="units_needed_to_breakeven.csv", mime="text/csv")
+
+    # Pareto (clean) + breakeven highlight
     pareto = chart_df[["Product", "Contribution Profit (SEK)"]].copy()
     pareto = pareto[pareto["Contribution Profit (SEK)"] > 0].sort_values("Contribution Profit (SEK)", ascending=False)
 
-    if len(pareto) == 0:
-        st.info("Pareto chart needs at least one product with positive contribution profit.")
-    else:
+    if len(pareto):
         pareto["Cumulative Profit (SEK)"] = pareto["Contribution Profit (SEK)"].cumsum()
-
         fig_par = go.Figure()
-        fig_par.add_trace(go.Bar(
-            x=pareto["Product"],
-            y=pareto["Contribution Profit (SEK)"],
-            name="Contribution Profit (SEK)",
-        ))
-        fig_par.add_trace(go.Scatter(
-            x=pareto["Product"],
-            y=pareto["Cumulative Profit (SEK)"],
-            name="Cumulative Profit (SEK)",
-            yaxis="y2",
-        ))
+        fig_par.add_trace(go.Bar(x=pareto["Product"], y=pareto["Contribution Profit (SEK)"], name="Contribution Profit (SEK)"))
+        fig_par.add_trace(go.Scatter(x=pareto["Product"], y=pareto["Cumulative Profit (SEK)"], name="Cumulative Profit (SEK)", yaxis="y2"))
 
         cross = pareto.index[pareto["Cumulative Profit (SEK)"] >= fixed_cost].tolist()
         if cross:
@@ -438,13 +425,9 @@ with right:
             be_val = float(pareto.loc[first_idx, "Cumulative Profit (SEK)"])
             xvals = list(pareto["Product"])
             be_pos = xvals.index(be_prod)
-            fig_par.add_vrect(
-                x0=be_pos - 0.5, x1=be_pos + 0.5,
-                fillcolor="lightgreen", opacity=0.18, line_width=0
-            )
+            fig_par.add_vrect(x0=be_pos - 0.5, x1=be_pos + 0.5, fillcolor="lightgreen", opacity=0.18, line_width=0)
             fig_par.add_annotation(
-                x=be_prod, y=be_val,
-                xref="x", yref="y2",
+                x=be_prod, y=be_val, xref="x", yref="y2",
                 text=f"Breakeven at: {be_prod}",
                 showarrow=True, arrowhead=2, ax=20, ay=-40
             )
@@ -459,6 +442,8 @@ with right:
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
         st.plotly_chart(fig_par, use_container_width=True)
+    else:
+        st.info("Pareto chart needs at least one product with positive contribution profit.")
 
     with st.expander("Details table", expanded=False):
         show = df_calc[[
