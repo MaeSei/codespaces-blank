@@ -13,17 +13,11 @@ st.set_page_config(page_title="Product Scenario Tool", layout="wide")
 st.markdown(
     """
     <style>
-      /* Overall page padding */
       .block-container { padding-top: 1.1rem; padding-bottom: 2.2rem; }
-
-      /* Add consistent vertical spacing between charts */
       div[data-testid="stPlotlyChart"] { margin-top: 1.0rem; margin-bottom: 1.6rem; }
-
-      /* Make inputs and sliders less cramped on small screens */
       div[data-testid="stNumberInput"] input { min-width: 0px; }
       div[data-testid="stSlider"] { padding-top: 0.25rem; padding-bottom: 0.25rem; }
 
-      /* Card wrapper for charts: better separation on phone */
       .chart-card {
         padding: 0.75rem 0.9rem;
         border: 1px solid rgba(0,0,0,0.08);
@@ -40,11 +34,10 @@ st.markdown(
 )
 
 def plotly_config():
-    # Keeps modebar from constantly overlaying. Best for mobile.
     return {
         "displayModeBar": "hover",   # only show on hover/tap
         "displaylogo": False,
-        "scrollZoom": False,         # avoid accidental zoom while scrolling
+        "scrollZoom": False,
         "responsive": True,
         "modeBarButtonsToRemove": [
             "zoom2d","pan2d","select2d","lasso2d",
@@ -63,22 +56,40 @@ def chart_card(fig, height=None):
 # Data (updated)
 # ----------------------------
 BASE_DATA = [
-    {"Product":"Ready-made library sequencing","Contribution/unit (SEK)":9825,"Base units":6,"Price/unit (SEK)":14000,"Cost/unit (SEK)":4175},
-    {"Product":"Human WGS (library + sequencing)","Contribution/unit (SEK)":1563,"Base units":0,"Price/unit (SEK)":4200,"Cost/unit (SEK)":2637},
-    {"Product":"Human WGS bulk pricing","Contribution/unit (SEK)":2403,"Base units":180,"Price/unit (SEK)":4200,"Cost/unit (SEK)":1797},
-    {"Product":"Human Whole Exome Sequencing 150x","Contribution/unit (SEK)":1730,"Base units":0,"Price/unit (SEK)":2400,"Cost/unit (SEK)":670},
+    {"Product":"Ready-made library sequencing","Contribution/unit (SEK)":9825,"Base units":4,"Price/unit (SEK)":14000,"Cost/unit (SEK)":4175},
+
+    {"Product":"Human WGS (library + sequencing)","Contribution/unit (SEK)":1563,"Base units":180,"Price/unit (SEK)":4200,"Cost/unit (SEK)":2637},
+    {"Product":"Human WGS bulk pricing","Contribution/unit (SEK)":2403,"Base units":0,"Price/unit (SEK)":4200,"Cost/unit (SEK)":1797},
+
+    {"Product":"Human Whole Exome Sequencing 150x","Contribution/unit (SEK)":1730,"Base units":180,"Price/unit (SEK)":2400,"Cost/unit (SEK)":670},
     {"Product":"Human Whole Exome Sequencing 250x","Contribution/unit (SEK)":1788,"Base units":0,"Price/unit (SEK)":2800,"Cost/unit (SEK)":1012},
+
     {"Product":"Bacterial transcriptome","Contribution/unit (SEK)":1200,"Base units":0,"Price/unit (SEK)":2200,"Cost/unit (SEK)":1000},
+
     {"Product":"Metagenome – Bulk +10% Price","Contribution/unit (SEK)":685,"Base units":0,"Price/unit (SEK)":990,"Cost/unit (SEK)":305},
     {"Product":"Metagenome – +20% Price","Contribution/unit (SEK)":670,"Base units":0,"Price/unit (SEK)":1080,"Cost/unit (SEK)":410},
-    {"Product":"Metagenome – Bulk Pricing","Contribution/unit (SEK)":595,"Base units":1061,"Price/unit (SEK)":900,"Cost/unit (SEK)":305},
+    {"Product":"Metagenome – Bulk Pricing","Contribution/unit (SEK)":595,"Base units":0,"Price/unit (SEK)":900,"Cost/unit (SEK)":305},
     {"Product":"Metagenome – +10% Price","Contribution/unit (SEK)":580,"Base units":0,"Price/unit (SEK)":990,"Cost/unit (SEK)":410},
-    {"Product":"Metagenome – Base (Optimized)","Contribution/unit (SEK)":490,"Base units":0,"Price/unit (SEK)":900,"Cost/unit (SEK)":410},
+    {"Product":"Metagenome – Base (Optimized)","Contribution/unit (SEK)":490,"Base units":1061,"Price/unit (SEK)":900,"Cost/unit (SEK)":410},
+
     {"Product":"FFPE extraction","Contribution/unit (SEK)":300,"Base units":0,"Price/unit (SEK)":350,"Cost/unit (SEK)":50},
     {"Product":"Bacterial DNA extraction","Contribution/unit (SEK)":100,"Base units":0,"Price/unit (SEK)":150,"Cost/unit (SEK)":50},
     {"Product":"DNA extraction","Contribution/unit (SEK)":60,"Base units":0,"Price/unit (SEK)":100,"Cost/unit (SEK)":40},
 ]
 BASE_DF = pd.DataFrame(BASE_DATA)
+
+# Families (we will control these via one units control + pricing selector)
+METAGENOME_PRODUCTS = [
+    "Metagenome – Base (Optimized)",
+    "Metagenome – +10% Price",
+    "Metagenome – +20% Price",
+    "Metagenome – Bulk Pricing",
+    "Metagenome – Bulk +10% Price",
+]
+HUMAN_WGS_PRODUCTS = [
+    "Human WGS (library + sequencing)",
+    "Human WGS bulk pricing",
+]
 
 GROUPS = {
     "Human sequencing": [
@@ -89,17 +100,11 @@ GROUPS = {
         "Human Whole Exome Sequencing 250x",
     ],
     "Transcriptomics": ["Bacterial transcriptome"],
-    "Metagenomics": [
-        "Metagenome – Bulk +10% Price",
-        "Metagenome – +20% Price",
-        "Metagenome – Bulk Pricing",
-        "Metagenome – +10% Price",
-        "Metagenome – Base (Optimized)",
-    ],
+    "Metagenomics": METAGENOME_PRODUCTS,
     "Extraction": ["FFPE extraction", "Bacterial DNA extraction", "DNA extraction"],
 }
 
-FIXED_COST_DEFAULT = 2_800_000
+FIXED_COST_DEFAULT = 4_800_000
 
 def compute(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -136,8 +141,36 @@ if "show_breakeven_view" not in st.session_state:
 if "compact_mode" not in st.session_state:
     st.session_state.compact_mode = False
 
+# Family controller state (metagenome + WGS)
+if "metagenome_units" not in st.session_state:
+    st.session_state.metagenome_units = int(sum(st.session_state.units.get(p, 0) for p in METAGENOME_PRODUCTS))
+
+if "metagenome_mode" not in st.session_state:
+    # pick the currently nonzero SKU if any, else default Base (Optimized)
+    nz = [p for p in METAGENOME_PRODUCTS if st.session_state.units.get(p, 0) > 0]
+    st.session_state.metagenome_mode = nz[0] if nz else "Metagenome – Base (Optimized)"
+
+if "wgs_units" not in st.session_state:
+    st.session_state.wgs_units = int(sum(st.session_state.units.get(p, 0) for p in HUMAN_WGS_PRODUCTS))
+
+if "wgs_mode" not in st.session_state:
+    nz = [p for p in HUMAN_WGS_PRODUCTS if st.session_state.units.get(p, 0) > 0]
+    st.session_state.wgs_mode = nz[0] if nz else "Human WGS (library + sequencing)"
+
+def apply_family_allocation():
+    """Route family units into the selected SKU, and zero out the other family SKUs."""
+    # Metagenome
+    for p in METAGENOME_PRODUCTS:
+        st.session_state.units[p] = 0
+    st.session_state.units[st.session_state.metagenome_mode] = clamp_nonneg_int(st.session_state.metagenome_units)
+
+    # Human WGS
+    for p in HUMAN_WGS_PRODUCTS:
+        st.session_state.units[p] = 0
+    st.session_state.units[st.session_state.wgs_mode] = clamp_nonneg_int(st.session_state.wgs_units)
+
 # ----------------------------
-# Slider/number sync callbacks
+# Slider/number sync callbacks for normal products
 # ----------------------------
 def on_slider_change(product: str, slider_k: str, num_k: str):
     v = clamp_nonneg_int(st.session_state[slider_k])
@@ -193,17 +226,123 @@ def render_controls():
 
     st.divider()
 
+    # --- Family controls: Metagenome ---
+    st.markdown("### Metagenome")
+    st.session_state.metagenome_mode = st.radio(
+        "Pricing mode",
+        METAGENOME_PRODUCTS,
+        index=METAGENOME_PRODUCTS.index(st.session_state.metagenome_mode) if st.session_state.metagenome_mode in METAGENOME_PRODUCTS else 0,
+        horizontal=not st.session_state.compact_mode,
+        key="meta_mode_radio",
+    )
+    c1, c2 = st.columns([0.72, 0.28], vertical_alignment="center") if not st.session_state.compact_mode else (None, None)
+
+    if st.session_state.compact_mode:
+        st.session_state.metagenome_units = st.slider(
+            "Metagenome units",
+            min_value=0, max_value=max(200, int(max(50, st.session_state.metagenome_units) * 2)),
+            value=int(st.session_state.metagenome_units),
+            step=1,
+            key="meta_units_slider",
+        )
+        st.session_state.metagenome_units = st.number_input(
+            "Metagenome units (exact)",
+            min_value=0,
+            value=int(st.session_state.metagenome_units),
+            step=1,
+            key="meta_units_num",
+        )
+    else:
+        with c1:
+            st.session_state.metagenome_units = st.slider(
+                "Metagenome units",
+                min_value=0, max_value=max(200, int(max(50, st.session_state.metagenome_units) * 2)),
+                value=int(st.session_state.metagenome_units),
+                step=1,
+                key="meta_units_slider",
+            )
+        with c2:
+            st.session_state.metagenome_units = st.number_input(
+                "Units",
+                min_value=0,
+                value=int(st.session_state.metagenome_units),
+                step=1,
+                label_visibility="collapsed",
+                key="meta_units_num",
+            )
+
+    st.divider()
+
+    # --- Family controls: Human WGS ---
+    st.markdown("### Human Whole Genome Sequencing (WGS)")
+    st.session_state.wgs_mode = st.radio(
+        "Pricing mode",
+        HUMAN_WGS_PRODUCTS,
+        index=HUMAN_WGS_PRODUCTS.index(st.session_state.wgs_mode) if st.session_state.wgs_mode in HUMAN_WGS_PRODUCTS else 0,
+        horizontal=not st.session_state.compact_mode,
+        key="wgs_mode_radio",
+    )
+
+    if st.session_state.compact_mode:
+        st.session_state.wgs_units = st.slider(
+            "Human WGS units",
+            min_value=0, max_value=max(200, int(max(50, st.session_state.wgs_units) * 2)),
+            value=int(st.session_state.wgs_units),
+            step=1,
+            key="wgs_units_slider",
+        )
+        st.session_state.wgs_units = st.number_input(
+            "Human WGS units (exact)",
+            min_value=0,
+            value=int(st.session_state.wgs_units),
+            step=1,
+            key="wgs_units_num",
+        )
+    else:
+        c1, c2 = st.columns([0.72, 0.28], vertical_alignment="center")
+        with c1:
+            st.session_state.wgs_units = st.slider(
+                "Human WGS units",
+                min_value=0, max_value=max(200, int(max(50, st.session_state.wgs_units) * 2)),
+                value=int(st.session_state.wgs_units),
+                step=1,
+                key="wgs_units_slider",
+            )
+        with c2:
+            st.session_state.wgs_units = st.number_input(
+                "Units",
+                min_value=0,
+                value=int(st.session_state.wgs_units),
+                step=1,
+                label_visibility="collapsed",
+                key="wgs_units_num",
+            )
+
+    st.divider()
+
+    # Apply routing from family controls into the actual SKU rows
+    apply_family_allocation()
+
+    # ---- Remaining products: standard per-product controls ----
+    st.markdown("### Other products")
     search = st.text_input("Search products", value="", placeholder="Type to filter…")
     group_choice = st.selectbox("Group", ["All"] + list(GROUPS.keys()), index=0)
 
     products = list(BASE_DF["Product"])
+
+    # Hide family SKUs (metagenome variants + wgs variants) from the normal list
+    hidden = set(METAGENOME_PRODUCTS + HUMAN_WGS_PRODUCTS)
+    products = [p for p in products if p not in hidden]
+
     if group_choice != "All":
-        products = [p for p in products if p in GROUPS[group_choice]]
+        grp = GROUPS[group_choice]
+        products = [p for p in products if p in grp]
+
     if search.strip():
         s = search.strip().lower()
         products = [p for p in products if s in p.lower()]
 
-    st.markdown('<div class="small-caption">Use sliders for quick changes; use the number box for exact values (synced).</div>', unsafe_allow_html=True)
+    st.markdown('<div class="small-caption">Sliders below directly set units for each product.</div>', unsafe_allow_html=True)
 
     def slider_max(baseline: int, current: int) -> int:
         anchor = max(baseline, current, 50)
@@ -269,17 +408,11 @@ def render_controls():
 
         st.session_state.units[p] = clamp_nonneg_int(st.session_state[sk])
 
-    if group_choice == "All" and not search.strip():
-        for g, plist in GROUPS.items():
-            with st.expander(g, expanded=not st.session_state.compact_mode):
-                for p in plist:
-                    render_product_control(p)
+    if not products:
+        st.info("No products match your filters.")
     else:
-        if not products:
-            st.info("No products match your filters.")
-        else:
-            for p in products:
-                render_product_control(p)
+        for p in products:
+            render_product_control(p)
 
     st.divider()
 
@@ -287,7 +420,19 @@ def render_controls():
     with cA:
         if st.button("Reset to baseline", use_container_width=True):
             st.session_state.units = {r["Product"]: int(r["Base units"]) for _, r in BASE_DF.iterrows()}
+
+            # Reset family controllers based on baseline
+            st.session_state.metagenome_units = int(sum(st.session_state.units.get(p, 0) for p in METAGENOME_PRODUCTS))
+            st.session_state.metagenome_mode = "Metagenome – Base (Optimized)"
+            st.session_state.wgs_units = int(sum(st.session_state.units.get(p, 0) for p in HUMAN_WGS_PRODUCTS))
+            st.session_state.wgs_mode = "Human WGS (library + sequencing)"
+
+            apply_family_allocation()
+
+            # sync normal product widgets
             for p, v in st.session_state.units.items():
+                if p in hidden:
+                    continue
                 st.session_state[f"sl_{safe_key(p)}"] = v
                 st.session_state[f"num_{safe_key(p)}"] = v
             st.rerun()
@@ -308,12 +453,30 @@ def render_controls():
             try:
                 loaded = json.load(uploaded)
                 m = {x["Product"]: int(x["Units"]) for x in loaded}
+
+                # load into units
                 for p in list(st.session_state.units.keys()):
                     if p in m:
                         st.session_state.units[p] = clamp_nonneg_int(m[p])
+
+                # recompute family controllers from loaded units
+                st.session_state.metagenome_units = int(sum(st.session_state.units.get(p, 0) for p in METAGENOME_PRODUCTS))
+                nzm = [p for p in METAGENOME_PRODUCTS if st.session_state.units.get(p, 0) > 0]
+                st.session_state.metagenome_mode = nzm[0] if nzm else "Metagenome – Base (Optimized)"
+
+                st.session_state.wgs_units = int(sum(st.session_state.units.get(p, 0) for p in HUMAN_WGS_PRODUCTS))
+                nzw = [p for p in HUMAN_WGS_PRODUCTS if st.session_state.units.get(p, 0) > 0]
+                st.session_state.wgs_mode = nzw[0] if nzw else "Human WGS (library + sequencing)"
+
+                apply_family_allocation()
+
+                # sync normal product widgets
                 for p, v in st.session_state.units.items():
+                    if p in hidden:
+                        continue
                     st.session_state[f"sl_{safe_key(p)}"] = v
                     st.session_state[f"num_{safe_key(p)}"] = v
+
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not load scenario: {e}")
@@ -322,6 +485,9 @@ def render_controls():
 # Results renderer
 # ----------------------------
 def render_results():
+    # Ensure family routing is applied before calculations
+    apply_family_allocation()
+
     fixed_cost = float(st.session_state.fixed_cost)
 
     df = BASE_DF.copy()
@@ -355,7 +521,7 @@ def render_results():
 
     chart_df = df_calc.sort_values("Contribution Profit (SEK)", ascending=False).copy()
 
-    # Gauge
+    # Gauge + cumulative (optional)
     if st.session_state.show_breakeven_view:
         coverage_ratio = (total_contrib / fixed_cost) if fixed_cost > 0 else 0.0
         fig_gauge = go.Figure(go.Indicator(
@@ -368,7 +534,6 @@ def render_results():
         fig_gauge.update_layout(margin=dict(l=20, r=20, t=55, b=20))
         chart_card(fig_gauge, height=210 if st.session_state.compact_mode else 220)
 
-        # Cumulative chart
         cum_df = chart_df[chart_df["Contribution Profit (SEK)"] > 0].copy()
         cum_df["Cumulative Contribution (SEK)"] = cum_df["Contribution Profit (SEK)"].cumsum()
 
@@ -396,31 +561,6 @@ def render_results():
             fig_cum = go.Figure()
             fig_cum.add_trace(go.Bar(x=cum_df["Product"], y=cum_df["Contribution Profit (SEK)"], name="Contribution Profit (SEK)"))
             fig_cum.add_trace(go.Scatter(x=cum_df["Product"], y=cum_df["Cumulative Contribution (SEK)"], name="Cumulative Contribution (SEK)", yaxis="y2"))
-
-            cross = cum_df.index[cum_df["Cumulative Contribution (SEK)"] >= fixed_cost].tolist()
-            if cross:
-                first_idx = cross[0]
-                be_prod = cum_df.loc[first_idx, "Product"]
-                be_val = float(cum_df.loc[first_idx, "Cumulative Contribution (SEK)"])
-                xvals = list(cum_df["Product"])
-                be_pos = xvals.index(be_prod)
-                fig_cum.add_vrect(x0=be_pos - 0.5, x1=be_pos + 0.5, fillcolor="lightgreen", opacity=0.18, line_width=0)
-                fig_cum.add_annotation(
-                    x=be_prod, y=be_val, xref="x", yref="y2",
-                    text=f"Breakeven reached at: {be_prod}",
-                    showarrow=True, arrowhead=2, ax=20, ay=-40
-                )
-            else:
-                if len(cum_df):
-                    fig_cum.add_annotation(
-                        x=cum_df["Product"].iloc[-1],
-                        y=float(cum_df["Cumulative Contribution (SEK)"].iloc[-1]),
-                        xref="x", yref="y2",
-                        text=f"Breakeven not reached. Shortfall: {shortfall:,.0f} SEK",
-                        showarrow=False,
-                        xanchor="right"
-                    )
-
             fig_cum.update_layout(
                 title="Cumulative Contribution (clean breakeven view)",
                 margin=dict(l=20, r=20, t=60, b=120),
@@ -430,26 +570,6 @@ def render_results():
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
             chart_card(fig_cum, height=440)
-
-    else:
-        # Profit by product
-        if st.session_state.compact_mode:
-            top_n = 10
-            chart_df_n = chart_df.head(top_n).copy()
-            chart_df_n["Label"] = chart_df_n["Product"].apply(lambda s: short_label(s, 22))
-            fig_profit = px.bar(
-                chart_df_n.sort_values("Contribution Profit (SEK)", ascending=True),
-                x="Contribution Profit (SEK)",
-                y="Label",
-                orientation="h",
-                title=f"Contribution Profit (Top {top_n})",
-            )
-            fig_profit.update_layout(margin=dict(l=20, r=20, t=60, b=50))
-            chart_card(fig_profit, height=460)
-        else:
-            fig_profit = px.bar(chart_df, x="Product", y="Contribution Profit (SEK)", title="Contribution Profit by Product")
-            fig_profit.update_layout(margin=dict(l=20, r=20, t=60, b=120), xaxis_tickangle=-35)
-            chart_card(fig_profit, height=440)
 
     # Waterfall
     fig_wf = go.Figure(go.Waterfall(
@@ -467,7 +587,7 @@ def render_results():
     )
     chart_card(fig_wf, height=320 if st.session_state.compact_mode else 360)
 
-    # Units needed table
+    # Units needed to breakeven table
     with st.expander("Units needed to reach breakeven (by product)", expanded=not st.session_state.compact_mode):
         st.metric("Breakeven shortfall (SEK)", f"{shortfall:,.0f}")
 
@@ -483,7 +603,6 @@ def render_results():
         units_needed_df["Units needed to breakeven"] = units_needed_df["Contribution/unit (SEK)"].apply(
             lambda c: units_needed(float(c), shortfall)
         )
-
         units_needed_df["Units needed (sort)"] = units_needed_df["Units needed to breakeven"].apply(
             lambda x: x if x is not None else 10**18
         )
@@ -499,7 +618,7 @@ def render_results():
         csv = show_units.to_csv(index=False).encode("utf-8")
         st.download_button("Download table (CSV)", data=csv, file_name="units_needed_to_breakeven.csv", mime="text/csv")
 
-    # Pareto
+    # Pareto (top drivers)
     pareto = chart_df[["Product", "Contribution Profit (SEK)"]].copy()
     pareto = pareto[pareto["Contribution Profit (SEK)"] > 0].sort_values("Contribution Profit (SEK)", ascending=False)
 
