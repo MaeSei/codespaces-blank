@@ -8,11 +8,16 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Product Scenario Tool", layout="wide")
 
 # ----------------------------
-# Data
+# Data (updated with WES 150x / 250x)
+# Contribution/unit = Price - Cost
 # ----------------------------
 BASE_DATA = [
     {"Product":"Ready-made library sequencing","Contribution/unit (SEK)":9825,"Base units":4,"Price/unit (SEK)":14000,"Cost/unit (SEK)":4175},
-    {"Product":"Human WGS (library + sequencing)","Contribution/unit (SEK)":1563,"Base units":360,"Price/unit (SEK)":4200,"Cost/unit (SEK)":2637},
+    {"Product":"Human WGS (library + sequencing)","Contribution/unit (SEK)":1563,"Base units":180,"Price/unit (SEK)":4200,"Cost/unit (SEK)":2637},
+
+    {"Product":"Human Whole Exome Sequencing 150x","Contribution/unit (SEK)":1730,"Base units":20,"Price/unit (SEK)":2400,"Cost/unit (SEK)":670},
+    {"Product":"Human Whole Exome Sequencing 250x","Contribution/unit (SEK)":1788,"Base units":0,"Price/unit (SEK)":2800,"Cost/unit (SEK)":1012},
+
     {"Product":"Bacterial transcriptome","Contribution/unit (SEK)":1200,"Base units":0,"Price/unit (SEK)":2200,"Cost/unit (SEK)":1000},
     {"Product":"Metagenome – Bulk +10% Price","Contribution/unit (SEK)":685,"Base units":0,"Price/unit (SEK)":990,"Cost/unit (SEK)":305},
     {"Product":"Metagenome – +20% Price","Contribution/unit (SEK)":670,"Base units":0,"Price/unit (SEK)":1080,"Cost/unit (SEK)":410},
@@ -26,7 +31,12 @@ BASE_DATA = [
 BASE_DF = pd.DataFrame(BASE_DATA)
 
 GROUPS = {
-    "Sequencing": ["Ready-made library sequencing", "Human WGS (library + sequencing)"],
+    "Human sequencing": [
+        "Human WGS (library + sequencing)",
+        "Human Whole Exome Sequencing 150x",
+        "Human Whole Exome Sequencing 250x",
+        "Ready-made library sequencing",
+    ],
     "Transcriptomics": ["Bacterial transcriptome"],
     "Metagenomics": [
         "Metagenome – Bulk +10% Price",
@@ -48,9 +58,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     df["Margin %"] = (df["Contribution Profit (SEK)"] / df["Revenue (SEK)"]).fillna(0.0)
     return df
 
-def scenario_units(multiplier: float) -> dict:
-    return {r["Product"]: int(round(r["Base units"] * multiplier)) for _, r in BASE_DF.iterrows()}
-
 def safe_key(p: str) -> str:
     return f"p_{abs(hash(p))}"
 
@@ -65,9 +72,6 @@ def clamp_nonneg_int(x) -> int:
 # ----------------------------
 if "units" not in st.session_state:
     st.session_state.units = {r["Product"]: int(r["Base units"]) for _, r in BASE_DF.iterrows()}
-
-if "active_scenario" not in st.session_state:
-    st.session_state.active_scenario = "Base"
 
 if "fixed_cost" not in st.session_state:
     st.session_state.fixed_cost = FIXED_COST_DEFAULT
@@ -115,32 +119,6 @@ with left:
         value=bool(st.session_state.show_breakeven_view),
         help="ON: shows fixed-cost coverage gauge + cumulative contribution chart. OFF: shows profit by product.",
     )
-
-    st.divider()
-
-    tab_base, tab_cons, tab_aggr = st.tabs(["Base", "Conservative", "Aggressive"])
-
-    def apply_scenario(name: str, mult: float):
-        st.session_state.units = scenario_units(mult)
-        st.session_state.active_scenario = name
-        for p, v in st.session_state.units.items():
-            st.session_state[f"sl_{safe_key(p)}"] = v
-            st.session_state[f"num_{safe_key(p)}"] = v
-
-    with tab_base:
-        if st.button("Apply Base", use_container_width=True):
-            apply_scenario("Base", 1.0)
-            st.rerun()
-
-    with tab_cons:
-        if st.button("Apply Conservative (80%)", use_container_width=True):
-            apply_scenario("Conservative", 0.8)
-            st.rerun()
-
-    with tab_aggr:
-        if st.button("Apply Aggressive (120%)", use_container_width=True):
-            apply_scenario("Aggressive", 1.2)
-            st.rerun()
 
     st.divider()
 
@@ -215,7 +193,10 @@ with left:
     cA, cB, cC = st.columns(3)
     with cA:
         if st.button("Reset to baseline", use_container_width=True):
-            apply_scenario("Base", 1.0)
+            st.session_state.units = {r["Product"]: int(r["Base units"]) for _, r in BASE_DF.iterrows()}
+            for p, v in st.session_state.units.items():
+                st.session_state[f"sl_{safe_key(p)}"] = v
+                st.session_state[f"num_{safe_key(p)}"] = v
             st.rerun()
 
     with cB:
@@ -240,7 +221,6 @@ with left:
                 for p, v in st.session_state.units.items():
                     st.session_state[f"sl_{safe_key(p)}"] = v
                     st.session_state[f"num_{safe_key(p)}"] = v
-                st.session_state.active_scenario = "Custom"
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not load scenario: {e}")
@@ -263,7 +243,6 @@ with right:
     contrib_margin = (total_contrib / total_revenue) if total_revenue else 0.0
     net_margin = (net_profit / total_revenue) if total_revenue else 0.0
     breakeven = total_contrib >= fixed_cost
-
     shortfall = max(0.0, fixed_cost - total_contrib)
 
     k1, k2, k3, k4 = st.columns(4)
@@ -272,11 +251,7 @@ with right:
     k3.metric("Contribution Profit (SEK)", f"{total_contrib:,.0f}", delta=f"Breakeven: {fixed_cost:,.0f}")
     k4.metric("Net Profit after Fixed (SEK)", f"{net_profit:,.0f}", delta=("Above breakeven" if breakeven else "Below breakeven"))
 
-    st.caption(
-        f"Scenario: **{st.session_state.active_scenario}** · "
-        f"Net margin: **{net_margin:.1%}** · Contribution margin: **{contrib_margin:.1%}**"
-    )
-
+    st.caption(f"Net margin: **{net_margin:.1%}** · Contribution margin: **{contrib_margin:.1%}**")
     st.divider()
 
     chart_df = df_calc.sort_values("Contribution Profit (SEK)", ascending=False).copy()
@@ -381,7 +356,6 @@ with right:
             lambda c: units_needed(float(c), shortfall)
         )
 
-        # Sort: valid (smallest first), then N/A
         units_needed_df["Units needed (sort)"] = units_needed_df["Units needed to breakeven"].apply(
             lambda x: x if x is not None else 10**18
         )
