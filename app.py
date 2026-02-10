@@ -8,12 +8,13 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Product Scenario Tool", layout="wide")
 
 # ----------------------------
-# Data (updated with WES 150x / 250x)
+# Data (updated with WES 150x / 250x and Human WGS bulk pricing)
 # Contribution/unit = Price - Cost
 # ----------------------------
 BASE_DATA = [
     {"Product":"Ready-made library sequencing","Contribution/unit (SEK)":9825,"Base units":4,"Price/unit (SEK)":14000,"Cost/unit (SEK)":4175},
     {"Product":"Human WGS (library + sequencing)","Contribution/unit (SEK)":1563,"Base units":180,"Price/unit (SEK)":4200,"Cost/unit (SEK)":2637},
+    {"Product":"Human WGS bulk pricing","Contribution/unit (SEK)":2403,"Base units":0,"Price/unit (SEK)":4200,"Cost/unit (SEK)":1797},
 
     {"Product":"Human Whole Exome Sequencing 150x","Contribution/unit (SEK)":1730,"Base units":20,"Price/unit (SEK)":2400,"Cost/unit (SEK)":670},
     {"Product":"Human Whole Exome Sequencing 250x","Contribution/unit (SEK)":1788,"Base units":0,"Price/unit (SEK)":2800,"Cost/unit (SEK)":1012},
@@ -32,10 +33,11 @@ BASE_DF = pd.DataFrame(BASE_DATA)
 
 GROUPS = {
     "Human sequencing": [
+        "Ready-made library sequencing",
         "Human WGS (library + sequencing)",
+        "Human WGS bulk pricing",
         "Human Whole Exome Sequencing 150x",
         "Human Whole Exome Sequencing 250x",
-        "Ready-made library sequencing",
     ],
     "Transcriptomics": ["Bacterial transcriptome"],
     "Metagenomics": [
