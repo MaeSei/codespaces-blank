@@ -99,9 +99,9 @@ with left:
     )
 
     st.session_state.show_breakeven_view = st.toggle(
-        "Show breakeven (cumulative) main chart",
+        "Show breakeven view (Gauge + Cumulative)",
         value=bool(st.session_state.show_breakeven_view),
-        help="ON: main chart shows cumulative contribution vs fixed costs. OFF: main chart shows profit by product.",
+        help="ON: shows fixed-cost coverage gauge and cumulative contribution chart. OFF: shows profit by product.",
     )
 
     st.divider()
@@ -262,59 +262,76 @@ with right:
 
     st.divider()
 
-    # Prepare sorted view
     chart_df = df_calc.sort_values("Contribution Profit (SEK)", ascending=False).copy()
 
-    # MAIN CHART: Toggle between breakeven (cumulative) vs simple profit-by-product
     if st.session_state.show_breakeven_view:
+        # --- Gauge: fixed-cost coverage ---
+        coverage_ratio = (total_contrib / fixed_cost) if fixed_cost > 0 else 0.0
+        fig_gauge = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=coverage_ratio * 100,
+            number={'suffix': "%"},
+            title={'text': "Fixed Cost Coverage"},
+            gauge={
+                'axis': {'range': [0, 150]},
+                'threshold': {'line': {'width': 4}, 'value': 100},
+            }
+        ))
+        fig_gauge.update_layout(height=220, margin=dict(l=20, r=20, t=50, b=20))
+        st.plotly_chart(fig_gauge, use_container_width=True)
+
+        # --- Cumulative contribution (clean) + breakeven highlight (no dashed line) ---
         cum_df = chart_df[chart_df["Contribution Profit (SEK)"] > 0].copy()
         cum_df["Cumulative Contribution (SEK)"] = cum_df["Contribution Profit (SEK)"].cumsum()
 
-        fig_main = go.Figure()
-        fig_main.add_trace(go.Bar(
+        fig_cum = go.Figure()
+        fig_cum.add_trace(go.Bar(
             x=cum_df["Product"],
             y=cum_df["Contribution Profit (SEK)"],
             name="Contribution Profit (SEK)"
         ))
-        fig_main.add_trace(go.Scatter(
+        fig_cum.add_trace(go.Scatter(
             x=cum_df["Product"],
             y=cum_df["Cumulative Contribution (SEK)"],
             name="Cumulative Contribution (SEK)",
             yaxis="y2"
         ))
 
-        # Fixed cost threshold line on cumulative axis
-        fig_main.add_shape(
-            type="line",
-            x0=-0.5, x1=max(len(cum_df["Product"]) - 0.5, 0.5),
-            y0=fixed_cost, y1=fixed_cost,
-            xref="x", yref="y2",
-            line=dict(dash="dash", width=2),
-        )
-        fig_main.add_annotation(
-            x=0, y=fixed_cost,
-            xref="x", yref="y2",
-            text=f"Fixed costs (breakeven): {fixed_cost:,.0f} SEK",
-            showarrow=False,
-            xanchor="left",
-            yanchor="bottom",
-        )
-
-        # Annotate first product where cumulative crosses breakeven
+        # Highlight breakeven product (first point where cumulative >= fixed cost)
         cross = cum_df.index[cum_df["Cumulative Contribution (SEK)"] >= fixed_cost].tolist()
         if cross:
             first_idx = cross[0]
             be_prod = cum_df.loc[first_idx, "Product"]
             be_val = float(cum_df.loc[first_idx, "Cumulative Contribution (SEK)"])
-            fig_main.add_annotation(
+
+            # Draw a subtle vertical highlight at breakeven product
+            xvals = list(cum_df["Product"])
+            be_pos = xvals.index(be_prod)
+            fig_cum.add_vrect(
+                x0=be_pos - 0.5, x1=be_pos + 0.5,
+                fillcolor="lightgreen", opacity=0.18,
+                line_width=0
+            )
+            fig_cum.add_annotation(
                 x=be_prod, y=be_val,
                 xref="x", yref="y2",
                 text=f"Breakeven reached at: {be_prod}",
                 showarrow=True, arrowhead=2, ax=20, ay=-40
             )
+        else:
+            # If not reached, annotate shortfall
+            shortfall = fixed_cost - total_contrib
+            fig_cum.add_annotation(
+                x=cum_df["Product"].iloc[-1] if len(cum_df) else 0,
+                y=cum_df["Cumulative Contribution (SEK)"].iloc[-1] if len(cum_df) else 0,
+                xref="x", yref="y2",
+                text=f"Breakeven not reached. Shortfall: {shortfall:,.0f} SEK",
+                showarrow=False,
+                xanchor="right"
+            )
 
-        fig_main.update_layout(
-            title="Cumulative Contribution vs Fixed Costs (Breakeven View)",
+        fig_cum.update_layout(
+            title="Cumulative Contribution (clean breakeven view)",
             height=440,
             margin=dict(l=20, r=20, t=60, b=120),
             xaxis=dict(tickangle=-35),
@@ -322,8 +339,10 @@ with right:
             yaxis2=dict(title="Cumulative SEK", overlaying="y", side="right"),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
-        st.plotly_chart(fig_main, use_container_width=True)
+        st.plotly_chart(fig_cum, use_container_width=True)
+
     else:
+        # Simple profit by product
         fig_profit = px.bar(
             chart_df,
             x="Product",
@@ -350,7 +369,7 @@ with right:
     )
     st.plotly_chart(fig_wf, use_container_width=True)
 
-    # Pareto: Bars = product contribution profit, Line = cumulative contribution profit (SEK)
+    # Pareto: Bars = contribution profit, Line = cumulative profit (SEK) - keep clean (no dashed line)
     pareto = chart_df[["Product", "Contribution Profit (SEK)"]].copy()
     pareto = pareto[pareto["Contribution Profit (SEK)"] > 0].sort_values("Contribution Profit (SEK)", ascending=False)
 
@@ -358,14 +377,6 @@ with right:
         st.info("Pareto chart needs at least one product with positive contribution profit.")
     else:
         pareto["Cumulative Profit (SEK)"] = pareto["Contribution Profit (SEK)"].cumsum()
-
-        idx_be = pareto.index[pareto["Cumulative Profit (SEK)"] >= fixed_cost].tolist()
-        be_product = None
-        be_value = None
-        if idx_be:
-            first_idx = idx_be[0]
-            be_product = pareto.loc[first_idx, "Product"]
-            be_value = float(pareto.loc[first_idx, "Cumulative Profit (SEK)"])
 
         fig_par = go.Figure()
         fig_par.add_trace(go.Bar(
@@ -380,32 +391,25 @@ with right:
             yaxis="y2",
         ))
 
-        # Fixed cost threshold line on cumulative axis (y2)
-        fig_par.add_shape(
-            type="line",
-            x0=-0.5, x1=len(pareto["Product"]) - 0.5,
-            y0=fixed_cost, y1=fixed_cost,
-            xref="x", yref="y2",
-            line=dict(dash="dash", width=2),
-        )
-        fig_par.add_annotation(
-            x=0,
-            y=fixed_cost,
-            xref="x",
-            yref="y2",
-            text=f"Fixed costs (breakeven): {fixed_cost:,.0f} SEK",
-            showarrow=False,
-            xanchor="left",
-            yanchor="bottom",
-        )
-
-        if be_product is not None:
+        # Highlight breakeven product (if reached)
+        cross = pareto.index[pareto["Cumulative Profit (SEK)"] >= fixed_cost].tolist()
+        if cross:
+            first_idx = cross[0]
+            be_prod = pareto.loc[first_idx, "Product"]
+            be_val = float(pareto.loc[first_idx, "Cumulative Profit (SEK)"])
+            xvals = list(pareto["Product"])
+            be_pos = xvals.index(be_prod)
+            fig_par.add_vrect(
+                x0=be_pos - 0.5, x1=be_pos + 0.5,
+                fillcolor="lightgreen", opacity=0.18,
+                line_width=0
+            )
             fig_par.add_annotation(
-                x=be_product,
-                y=be_value,
+                x=be_prod,
+                y=be_val,
                 xref="x",
                 yref="y2",
-                text=f"Breakeven reached at: {be_product}",
+                text=f"Breakeven at: {be_prod}",
                 showarrow=True,
                 arrowhead=2,
                 ax=20,
@@ -413,7 +417,7 @@ with right:
             )
 
         fig_par.update_layout(
-            title="Pareto: Profit Drivers + Breakeven Threshold (Fixed Costs)",
+            title="Pareto: Profit Drivers (clean) + breakeven highlight",
             height=420,
             margin=dict(l=20, r=20, t=60, b=120),
             xaxis=dict(tickangle=-35),
