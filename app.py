@@ -13,20 +13,57 @@ st.set_page_config(page_title="Product Scenario Tool", layout="wide")
 st.markdown(
     """
     <style>
+      /* Overall page padding */
+      .block-container { padding-top: 1.1rem; padding-bottom: 2.2rem; }
+
+      /* Add consistent vertical spacing between charts */
+      div[data-testid="stPlotlyChart"] { margin-top: 1.0rem; margin-bottom: 1.6rem; }
+
       /* Make inputs and sliders less cramped on small screens */
       div[data-testid="stNumberInput"] input { min-width: 0px; }
       div[data-testid="stSlider"] { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+
+      /* Card wrapper for charts: better separation on phone */
+      .chart-card {
+        padding: 0.75rem 0.9rem;
+        border: 1px solid rgba(0,0,0,0.08);
+        border-radius: 12px;
+        background: rgba(255,255,255,0.75);
+      }
+      @media (prefers-color-scheme: dark) {
+        .chart-card { border-color: rgba(255,255,255,0.12); background: rgba(0,0,0,0.18); }
+      }
       .small-caption { font-size: 0.85rem; opacity: 0.85; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
+def plotly_config():
+    # Keeps modebar from constantly overlaying. Best for mobile.
+    return {
+        "displayModeBar": "hover",   # only show on hover/tap
+        "displaylogo": False,
+        "scrollZoom": False,         # avoid accidental zoom while scrolling
+        "responsive": True,
+        "modeBarButtonsToRemove": [
+            "zoom2d","pan2d","select2d","lasso2d",
+            "zoomIn2d","zoomOut2d","autoScale2d","resetScale2d"
+        ],
+    }
+
+def chart_card(fig, height=None):
+    if height is not None:
+        fig.update_layout(height=height)
+    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=True, config=plotly_config())
+    st.markdown("</div>", unsafe_allow_html=True)
+
 # ----------------------------
 # Data (updated)
 # ----------------------------
 BASE_DATA = [
-    {"Product":"Ready-made library sequencing","Contribution/unit (SEK)":9825,"Base units":4,"Price/unit (SEK)":14000,"Cost/unit (SEK)":4175},
+    {"Product":"Ready-made library sequencing","Contribution/unit (SEK)":9825,"Base units":6,"Price/unit (SEK)":14000,"Cost/unit (SEK)":4175},
     {"Product":"Human WGS (library + sequencing)","Contribution/unit (SEK)":1563,"Base units":0,"Price/unit (SEK)":4200,"Cost/unit (SEK)":2637},
     {"Product":"Human WGS bulk pricing","Contribution/unit (SEK)":2403,"Base units":180,"Price/unit (SEK)":4200,"Cost/unit (SEK)":1797},
     {"Product":"Human Whole Exome Sequencing 150x","Contribution/unit (SEK)":1730,"Base units":0,"Price/unit (SEK)":2400,"Cost/unit (SEK)":670},
@@ -97,7 +134,7 @@ if "show_breakeven_view" not in st.session_state:
     st.session_state.show_breakeven_view = True
 
 if "compact_mode" not in st.session_state:
-    st.session_state.compact_mode = False  # user can toggle
+    st.session_state.compact_mode = False
 
 # ----------------------------
 # Slider/number sync callbacks
@@ -118,19 +155,17 @@ def on_num_change(product: str, slider_k: str, num_k: str):
 st.title("Product Scenario Tool")
 st.caption("Adjust units per product and instantly see Revenue, Costs, Contribution, and Net Profit after fixed costs.")
 
-# A user-controlled compact mode (works on phone reliably)
 st.session_state.compact_mode = st.toggle(
     "Compact/mobile mode",
     value=bool(st.session_state.compact_mode),
-    help="Optimizes layout for phones: stacked layout, shorter labels, top-N charts.",
+    help="Optimizes layout for phones: stacked layout, shorter labels, and more spacing.",
 )
 
-# If compact mode, constrain layout visually
 if st.session_state.compact_mode:
     st.markdown(
         """
         <style>
-          section.main > div { max-width: 820px; margin: 0 auto; }
+          section.main > div { max-width: 860px; margin: 0 auto; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -168,7 +203,7 @@ def render_controls():
         s = search.strip().lower()
         products = [p for p in products if s in p.lower()]
 
-    st.markdown('<div class="small-caption">Use the slider for quick changes; use the number box for exact values (synced).</div>', unsafe_allow_html=True)
+    st.markdown('<div class="small-caption">Use sliders for quick changes; use the number box for exact values (synced).</div>', unsafe_allow_html=True)
 
     def slider_max(baseline: int, current: int) -> int:
         anchor = max(baseline, current, 50)
@@ -187,7 +222,6 @@ def render_controls():
             st.session_state[nk] = current
 
         if st.session_state.compact_mode:
-            # stacked (better on phone)
             st.slider(
                 p,
                 min_value=0,
@@ -207,8 +241,8 @@ def render_controls():
                 on_change=on_num_change,
                 kwargs={"product": p, "slider_k": sk, "num_k": nk},
             )
+            st.divider()
         else:
-            # desktop two-column control
             c1, c2 = st.columns([0.72, 0.28], vertical_alignment="center")
             with c1:
                 st.slider(
@@ -285,7 +319,7 @@ def render_controls():
                 st.error(f"Could not load scenario: {e}")
 
 # ----------------------------
-# Charts/KPIs renderer
+# Results renderer
 # ----------------------------
 def render_results():
     fixed_cost = float(st.session_state.fixed_cost)
@@ -303,7 +337,6 @@ def render_results():
     breakeven = total_contrib >= fixed_cost
     shortfall = max(0.0, fixed_cost - total_contrib)
 
-    # KPIs: fewer columns on mobile
     if st.session_state.compact_mode:
         st.metric("Total Revenue (SEK)", f"{total_revenue:,.0f}")
         st.metric("Variable Cost (SEK)", f"{total_var_cost:,.0f}")
@@ -322,11 +355,7 @@ def render_results():
 
     chart_df = df_calc.sort_values("Contribution Profit (SEK)", ascending=False).copy()
 
-    # In compact mode: show top N to avoid unreadable x-axis labels
-    top_n = 8 if st.session_state.compact_mode else len(chart_df)
-    chart_df_n = chart_df.head(top_n).copy()
-    chart_df_n["Label"] = chart_df_n["Product"].apply(lambda s: short_label(s, 22 if st.session_state.compact_mode else 40))
-
+    # Gauge
     if st.session_state.show_breakeven_view:
         coverage_ratio = (total_contrib / fixed_cost) if fixed_cost > 0 else 0.0
         fig_gauge = go.Figure(go.Indicator(
@@ -336,51 +365,38 @@ def render_results():
             title={"text": "Fixed Cost Coverage"},
             gauge={"axis": {"range": [0, 150]}, "threshold": {"line": {"width": 4}, "value": 100}},
         ))
-        fig_gauge.update_layout(height=210 if st.session_state.compact_mode else 220, margin=dict(l=20, r=20, t=45, b=20))
-        st.plotly_chart(fig_gauge, use_container_width=True)
+        fig_gauge.update_layout(margin=dict(l=20, r=20, t=55, b=20))
+        chart_card(fig_gauge, height=210 if st.session_state.compact_mode else 220)
 
+        # Cumulative chart
         cum_df = chart_df[chart_df["Contribution Profit (SEK)"] > 0].copy()
         cum_df["Cumulative Contribution (SEK)"] = cum_df["Contribution Profit (SEK)"].cumsum()
 
-        # For compact: use horizontal bars + cumulative line (still readable)
         if st.session_state.compact_mode:
             cum_df = cum_df.head(10).copy()
             cum_df["Label"] = cum_df["Product"].apply(lambda s: short_label(s, 22))
             fig_cum = go.Figure()
             fig_cum.add_trace(go.Bar(
-                y=cum_df["Label"],
-                x=cum_df["Contribution Profit (SEK)"],
-                name="Contribution Profit (SEK)",
-                orientation="h"
+                y=cum_df["Label"], x=cum_df["Contribution Profit (SEK)"],
+                name="Contribution Profit (SEK)", orientation="h"
             ))
             fig_cum.add_trace(go.Scatter(
-                y=cum_df["Label"],
-                x=cum_df["Cumulative Contribution (SEK)"],
-                name="Cumulative Contribution (SEK)",
-                xaxis="x2"
+                y=cum_df["Label"], x=cum_df["Cumulative Contribution (SEK)"],
+                name="Cumulative Contribution (SEK)", xaxis="x2"
             ))
             fig_cum.update_layout(
                 title="Cumulative Contribution (Top 10)",
-                height=520,
-                margin=dict(l=20, r=20, t=60, b=40),
+                margin=dict(l=20, r=20, t=60, b=50),
                 xaxis=dict(title="SEK (per product)"),
                 xaxis2=dict(title="Cumulative SEK", overlaying="x", side="top"),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
-            st.plotly_chart(fig_cum, use_container_width=True)
+            chart_card(fig_cum, height=560)
         else:
             fig_cum = go.Figure()
-            fig_cum.add_trace(go.Bar(
-                x=cum_df["Product"],
-                y=cum_df["Contribution Profit (SEK)"],
-                name="Contribution Profit (SEK)",
-            ))
-            fig_cum.add_trace(go.Scatter(
-                x=cum_df["Product"],
-                y=cum_df["Cumulative Contribution (SEK)"],
-                name="Cumulative Contribution (SEK)",
-                yaxis="y2",
-            ))
+            fig_cum.add_trace(go.Bar(x=cum_df["Product"], y=cum_df["Contribution Profit (SEK)"], name="Contribution Profit (SEK)"))
+            fig_cum.add_trace(go.Scatter(x=cum_df["Product"], y=cum_df["Cumulative Contribution (SEK)"], name="Cumulative Contribution (SEK)", yaxis="y2"))
+
             cross = cum_df.index[cum_df["Cumulative Contribution (SEK)"] >= fixed_cost].tolist()
             if cross:
                 first_idx = cross[0]
@@ -394,33 +410,48 @@ def render_results():
                     text=f"Breakeven reached at: {be_prod}",
                     showarrow=True, arrowhead=2, ax=20, ay=-40
                 )
+            else:
+                if len(cum_df):
+                    fig_cum.add_annotation(
+                        x=cum_df["Product"].iloc[-1],
+                        y=float(cum_df["Cumulative Contribution (SEK)"].iloc[-1]),
+                        xref="x", yref="y2",
+                        text=f"Breakeven not reached. Shortfall: {shortfall:,.0f} SEK",
+                        showarrow=False,
+                        xanchor="right"
+                    )
+
             fig_cum.update_layout(
                 title="Cumulative Contribution (clean breakeven view)",
-                height=440,
                 margin=dict(l=20, r=20, t=60, b=120),
                 xaxis=dict(tickangle=-35),
                 yaxis=dict(title="SEK (per product)"),
                 yaxis2=dict(title="Cumulative SEK", overlaying="y", side="right"),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
-            st.plotly_chart(fig_cum, use_container_width=True)
+            chart_card(fig_cum, height=440)
+
     else:
-        # Profit by product (compact uses horizontal top-N)
+        # Profit by product
         if st.session_state.compact_mode:
+            top_n = 10
+            chart_df_n = chart_df.head(top_n).copy()
+            chart_df_n["Label"] = chart_df_n["Product"].apply(lambda s: short_label(s, 22))
             fig_profit = px.bar(
                 chart_df_n.sort_values("Contribution Profit (SEK)", ascending=True),
                 x="Contribution Profit (SEK)",
                 y="Label",
                 orientation="h",
-                title=f"Contribution Profit by Product (Top {top_n})",
+                title=f"Contribution Profit (Top {top_n})",
             )
-            fig_profit.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=40))
+            fig_profit.update_layout(margin=dict(l=20, r=20, t=60, b=50))
+            chart_card(fig_profit, height=460)
         else:
             fig_profit = px.bar(chart_df, x="Product", y="Contribution Profit (SEK)", title="Contribution Profit by Product")
-            fig_profit.update_layout(xaxis_tickangle=-35, height=440, margin=dict(l=20, r=20, t=60, b=120))
-        st.plotly_chart(fig_profit, use_container_width=True)
+            fig_profit.update_layout(margin=dict(l=20, r=20, t=60, b=120), xaxis_tickangle=-35)
+            chart_card(fig_profit, height=440)
 
-    # Waterfall: still fine on mobile but reduce height
+    # Waterfall
     fig_wf = go.Figure(go.Waterfall(
         orientation="v",
         measure=["absolute", "relative", "relative", "total"],
@@ -430,12 +461,11 @@ def render_results():
     ))
     fig_wf.update_layout(
         title="Waterfall: Revenue → Variable Cost → Fixed Cost → Net Profit",
-        height=320 if st.session_state.compact_mode else 360,
-        margin=dict(l=20, r=20, t=60, b=40),
+        margin=dict(l=20, r=20, t=60, b=50),
         showlegend=False,
         yaxis_title="SEK",
     )
-    st.plotly_chart(fig_wf, use_container_width=True)
+    chart_card(fig_wf, height=320 if st.session_state.compact_mode else 360)
 
     # Units needed table
     with st.expander("Units needed to reach breakeven (by product)", expanded=not st.session_state.compact_mode):
@@ -459,7 +489,6 @@ def render_results():
         )
         show_units = units_needed_df.sort_values("Units needed (sort)", ascending=True).drop(columns=["Units needed (sort)"])
 
-        # Compact: show fewer columns first
         if st.session_state.compact_mode:
             show_units2 = show_units.copy()
             show_units2["Product"] = show_units2["Product"].apply(lambda s: short_label(s, 26))
@@ -470,26 +499,27 @@ def render_results():
         csv = show_units.to_csv(index=False).encode("utf-8")
         st.download_button("Download table (CSV)", data=csv, file_name="units_needed_to_breakeven.csv", mime="text/csv")
 
-    # Pareto: on mobile show top 10 only
+    # Pareto
     pareto = chart_df[["Product", "Contribution Profit (SEK)"]].copy()
     pareto = pareto[pareto["Contribution Profit (SEK)"] > 0].sort_values("Contribution Profit (SEK)", ascending=False)
+
     if len(pareto):
         if st.session_state.compact_mode:
             pareto = pareto.head(10).copy()
             pareto["Label"] = pareto["Product"].apply(lambda s: short_label(s, 22))
             pareto["Cumulative Profit (SEK)"] = pareto["Contribution Profit (SEK)"].cumsum()
+
             fig_par = go.Figure()
             fig_par.add_trace(go.Bar(y=pareto["Label"], x=pareto["Contribution Profit (SEK)"], name="Contribution Profit (SEK)", orientation="h"))
             fig_par.add_trace(go.Scatter(y=pareto["Label"], x=pareto["Cumulative Profit (SEK)"], name="Cumulative Profit (SEK)", xaxis="x2"))
             fig_par.update_layout(
                 title="Pareto (Top 10)",
-                height=520,
-                margin=dict(l=20, r=20, t=60, b=40),
+                margin=dict(l=20, r=20, t=60, b=50),
                 xaxis=dict(title="SEK (per product)"),
                 xaxis2=dict(title="Cumulative SEK", overlaying="x", side="top"),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
-            st.plotly_chart(fig_par, use_container_width=True)
+            chart_card(fig_par, height=560)
         else:
             pareto["Cumulative Profit (SEK)"] = pareto["Contribution Profit (SEK)"].cumsum()
             fig_par = go.Figure()
@@ -497,14 +527,13 @@ def render_results():
             fig_par.add_trace(go.Scatter(x=pareto["Product"], y=pareto["Cumulative Profit (SEK)"], name="Cumulative Profit (SEK)", yaxis="y2"))
             fig_par.update_layout(
                 title="Pareto: Profit Drivers",
-                height=420,
                 margin=dict(l=20, r=20, t=60, b=120),
                 xaxis=dict(tickangle=-35),
                 yaxis=dict(title="SEK (per product)"),
                 yaxis2=dict(title="Cumulative SEK", overlaying="y", side="right"),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
-            st.plotly_chart(fig_par, use_container_width=True)
+            chart_card(fig_par, height=420)
     else:
         st.info("Pareto chart needs at least one product with positive contribution profit.")
 
@@ -519,10 +548,9 @@ def render_results():
         st.dataframe(show, use_container_width=True, hide_index=True)
 
 # ----------------------------
-# Layout: desktop (two columns) vs compact (stacked)
+# Layout
 # ----------------------------
 if st.session_state.compact_mode:
-    # stacked: controls in an expander, then results
     with st.expander("Controls", expanded=True):
         render_controls()
     render_results()
