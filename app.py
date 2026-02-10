@@ -1,4 +1,5 @@
 import json
+import math
 import pandas as pd
 import streamlit as st
 import plotly.express as px
@@ -37,7 +38,7 @@ GROUPS = {
     "Extraction": ["FFPE extraction", "Bacterial DNA extraction", "DNA extraction"],
 }
 
-FIXED_COST_DEFAULT = 2_000_000
+FIXED_COST_DEFAULT = 2_800_000
 
 def compute(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -48,15 +49,14 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def scenario_units(multiplier: float) -> dict:
-    d = {}
-    for _, r in BASE_DF.iterrows():
-        d[r["Product"]] = int(round(r["Base units"] * multiplier))
-    return d
+    return {r["Product"]: int(round(r["Base units"] * multiplier)) for _, r in BASE_DF.iterrows()}
+
+def safe_key(p: str) -> str:
+    return f"p_{abs(hash(p))}"
 
 def clamp_nonneg_int(x) -> int:
     try:
-        v = int(x)
-        return max(0, v)
+        return max(0, int(x))
     except Exception:
         return 0
 
@@ -75,8 +75,26 @@ if "fixed_cost" not in st.session_state:
 if "show_breakeven_view" not in st.session_state:
     st.session_state.show_breakeven_view = True
 
+if "breakeven_product" not in st.session_state:
+    # default to highest contribution/unit
+    p = BASE_DF.sort_values("Contribution/unit (SEK)", ascending=False)["Product"].iloc[0]
+    st.session_state.breakeven_product = p
+
 # ----------------------------
-# Header
+# Slider/number sync callbacks
+# ----------------------------
+def on_slider_change(product: str, slider_k: str, num_k: str):
+    v = clamp_nonneg_int(st.session_state[slider_k])
+    st.session_state.units[product] = v
+    st.session_state[num_k] = v
+
+def on_num_change(product: str, slider_k: str, num_k: str):
+    v = clamp_nonneg_int(st.session_state[num_k])
+    st.session_state.units[product] = v
+    st.session_state[slider_k] = v
+
+# ----------------------------
+# UI
 # ----------------------------
 st.title("Product Scenario Tool")
 st.caption("Adjust units per product and instantly see Revenue, Costs, Contribution, and Net Profit after fixed costs.")
@@ -89,7 +107,6 @@ left, right = st.columns([0.44, 0.56], gap="large")
 with left:
     st.subheader("Controls")
 
-    # Fixed cost threshold (breakeven)
     st.session_state.fixed_cost = st.number_input(
         "Fixed costs (SEK)",
         min_value=0,
@@ -101,7 +118,7 @@ with left:
     st.session_state.show_breakeven_view = st.toggle(
         "Show breakeven view (Gauge + Cumulative)",
         value=bool(st.session_state.show_breakeven_view),
-        help="ON: shows fixed-cost coverage gauge and cumulative contribution chart. OFF: shows profit by product.",
+        help="ON: shows fixed-cost coverage gauge + cumulative contribution chart. OFF: shows profit by product.",
     )
 
     st.divider()
@@ -112,28 +129,28 @@ with left:
     def apply_scenario(name: str, mult: float):
         st.session_state.units = scenario_units(mult)
         st.session_state.active_scenario = name
+        # sync widget states
+        for p, v in st.session_state.units.items():
+            st.session_state[f"sl_{safe_key(p)}"] = v
+            st.session_state[f"num_{safe_key(p)}"] = v
 
     with tab_base:
-        st.write("Baseline units from your table.")
         if st.button("Apply Base", use_container_width=True):
             apply_scenario("Base", 1.0)
             st.rerun()
 
     with tab_cons:
-        st.write("Example: 80% of baseline units (adjust in code if you want different logic).")
         if st.button("Apply Conservative (80%)", use_container_width=True):
             apply_scenario("Conservative", 0.8)
             st.rerun()
 
     with tab_aggr:
-        st.write("Example: 120% of baseline units (adjust in code if you want different logic).")
         if st.button("Apply Aggressive (120%)", use_container_width=True):
             apply_scenario("Aggressive", 1.2)
             st.rerun()
 
     st.divider()
 
-    # Search + group filter
     search = st.text_input("Search products", value="", placeholder="Type to filter…")
     group_choice = st.selectbox("Group", ["All"] + list(GROUPS.keys()), index=0)
 
@@ -144,7 +161,7 @@ with left:
         s = search.strip().lower()
         products = [p for p in products if s in p.lower()]
 
-    st.caption("Use sliders for fast changes, +/- for small tweaks, and the number box for exact values.")
+    st.caption("Use the slider for quick changes; use the number box for exact values (they stay synced).")
 
     def slider_max(baseline: int, current: int) -> int:
         anchor = max(baseline, current, 50)
@@ -154,33 +171,39 @@ with left:
         baseline = int(BASE_DF.loc[BASE_DF["Product"] == p, "Base units"].iloc[0])
         current = int(st.session_state.units.get(p, baseline))
 
-        c1, c2, c3, c4 = st.columns([0.52, 0.18, 0.15, 0.15], vertical_alignment="center")
+        sk = f"sl_{safe_key(p)}"
+        nk = f"num_{safe_key(p)}"
+
+        if sk not in st.session_state:
+            st.session_state[sk] = current
+        if nk not in st.session_state:
+            st.session_state[nk] = current
+
+        c1, c2 = st.columns([0.72, 0.28], vertical_alignment="center")
         with c1:
-            new_slider = st.slider(
+            st.slider(
                 p,
                 min_value=0,
                 max_value=slider_max(baseline, current),
-                value=current,
+                value=int(st.session_state[sk]),
                 step=1,
-                key=f"sl_{p}",
+                key=sk,
+                on_change=on_slider_change,
+                kwargs={"product": p, "slider_k": sk, "num_k": nk},
             )
         with c2:
-            new_num = st.number_input(
+            st.number_input(
                 "Units",
                 min_value=0,
-                value=int(new_slider),
+                value=int(st.session_state[nk]),
                 step=1,
-                key=f"num_{p}",
+                key=nk,
                 label_visibility="collapsed",
+                on_change=on_num_change,
+                kwargs={"product": p, "slider_k": sk, "num_k": nk},
             )
-        with c3:
-            if st.button("−", key=f"minus_{p}", use_container_width=True):
-                new_num = max(0, int(new_num) - 1)
-        with c4:
-            if st.button("+", key=f"plus_{p}", use_container_width=True):
-                new_num = int(new_num) + 1
 
-        st.session_state.units[p] = clamp_nonneg_int(new_num)
+        st.session_state.units[p] = clamp_nonneg_int(st.session_state[sk])
 
     if group_choice == "All" and not search.strip():
         for g, plist in GROUPS.items():
@@ -222,6 +245,9 @@ with left:
                 for p in list(st.session_state.units.keys()):
                     if p in m:
                         st.session_state.units[p] = clamp_nonneg_int(m[p])
+                for p, v in st.session_state.units.items():
+                    st.session_state[f"sl_{safe_key(p)}"] = v
+                    st.session_state[f"num_{safe_key(p)}"] = v
                 st.session_state.active_scenario = "Custom"
                 st.rerun()
             except Exception as e:
@@ -240,10 +266,29 @@ with right:
     total_revenue = float(df_calc["Revenue (SEK)"].sum())
     total_var_cost = float(df_calc["Variable Cost (SEK)"].sum())
     total_contrib = float(df_calc["Contribution Profit (SEK)"].sum())
+
     net_profit = total_contrib - fixed_cost
     contrib_margin = (total_contrib / total_revenue) if total_revenue else 0.0
     net_margin = (net_profit / total_revenue) if total_revenue else 0.0
     breakeven = total_contrib >= fixed_cost
+
+    # ---- NEW: Units missing to reach breakeven (chosen product) ----
+    shortfall = max(0.0, fixed_cost - total_contrib)
+
+    st.session_state.breakeven_product = st.selectbox(
+        "Breakeven driver product (calculate missing units if you add more of this item)",
+        options=list(BASE_DF["Product"]),
+        index=list(BASE_DF["Product"]).index(st.session_state.breakeven_product),
+    )
+
+    contrib_per_unit = float(BASE_DF.loc[BASE_DF["Product"] == st.session_state.breakeven_product, "Contribution/unit (SEK)"].iloc[0])
+    units_needed = None
+    if shortfall <= 0:
+        units_needed = 0
+    elif contrib_per_unit > 0:
+        units_needed = int(math.ceil(shortfall / contrib_per_unit))
+    else:
+        units_needed = None  # not meaningful if contribution/unit <= 0
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Total Revenue (SEK)", f"{total_revenue:,.0f}")
@@ -255,6 +300,14 @@ with right:
         delta=("Above breakeven" if breakeven else "Below breakeven"),
     )
 
+    # breakeven gap KPI
+    c1, c2 = st.columns(2)
+    c1.metric("Breakeven shortfall (SEK)", f"{shortfall:,.0f}")
+    if units_needed is None:
+        c2.metric("Units needed (selected product)", "N/A")
+    else:
+        c2.metric("Units needed (selected product)", f"{units_needed:,}")
+
     st.caption(
         f"Scenario: **{st.session_state.active_scenario}** · "
         f"Net margin: **{net_margin:.1%}** · Contribution margin: **{contrib_margin:.1%}**"
@@ -265,22 +318,17 @@ with right:
     chart_df = df_calc.sort_values("Contribution Profit (SEK)", ascending=False).copy()
 
     if st.session_state.show_breakeven_view:
-        # --- Gauge: fixed-cost coverage ---
         coverage_ratio = (total_contrib / fixed_cost) if fixed_cost > 0 else 0.0
         fig_gauge = go.Figure(go.Indicator(
             mode="gauge+number",
             value=coverage_ratio * 100,
-            number={'suffix': "%"},
-            title={'text': "Fixed Cost Coverage"},
-            gauge={
-                'axis': {'range': [0, 150]},
-                'threshold': {'line': {'width': 4}, 'value': 100},
-            }
+            number={"suffix": "%"},
+            title={"text": "Fixed Cost Coverage"},
+            gauge={"axis": {"range": [0, 150]}, "threshold": {"line": {"width": 4}, "value": 100}},
         ))
         fig_gauge.update_layout(height=220, margin=dict(l=20, r=20, t=50, b=20))
         st.plotly_chart(fig_gauge, use_container_width=True)
 
-        # --- Cumulative contribution (clean) + breakeven highlight (no dashed line) ---
         cum_df = chart_df[chart_df["Contribution Profit (SEK)"] > 0].copy()
         cum_df["Cumulative Contribution (SEK)"] = cum_df["Contribution Profit (SEK)"].cumsum()
 
@@ -288,29 +336,25 @@ with right:
         fig_cum.add_trace(go.Bar(
             x=cum_df["Product"],
             y=cum_df["Contribution Profit (SEK)"],
-            name="Contribution Profit (SEK)"
+            name="Contribution Profit (SEK)",
         ))
         fig_cum.add_trace(go.Scatter(
             x=cum_df["Product"],
             y=cum_df["Cumulative Contribution (SEK)"],
             name="Cumulative Contribution (SEK)",
-            yaxis="y2"
+            yaxis="y2",
         ))
 
-        # Highlight breakeven product (first point where cumulative >= fixed cost)
         cross = cum_df.index[cum_df["Cumulative Contribution (SEK)"] >= fixed_cost].tolist()
         if cross:
             first_idx = cross[0]
             be_prod = cum_df.loc[first_idx, "Product"]
             be_val = float(cum_df.loc[first_idx, "Cumulative Contribution (SEK)"])
-
-            # Draw a subtle vertical highlight at breakeven product
             xvals = list(cum_df["Product"])
             be_pos = xvals.index(be_prod)
             fig_cum.add_vrect(
                 x0=be_pos - 0.5, x1=be_pos + 0.5,
-                fillcolor="lightgreen", opacity=0.18,
-                line_width=0
+                fillcolor="lightgreen", opacity=0.18, line_width=0
             )
             fig_cum.add_annotation(
                 x=be_prod, y=be_val,
@@ -319,16 +363,15 @@ with right:
                 showarrow=True, arrowhead=2, ax=20, ay=-40
             )
         else:
-            # If not reached, annotate shortfall
-            shortfall = fixed_cost - total_contrib
-            fig_cum.add_annotation(
-                x=cum_df["Product"].iloc[-1] if len(cum_df) else 0,
-                y=cum_df["Cumulative Contribution (SEK)"].iloc[-1] if len(cum_df) else 0,
-                xref="x", yref="y2",
-                text=f"Breakeven not reached. Shortfall: {shortfall:,.0f} SEK",
-                showarrow=False,
-                xanchor="right"
-            )
+            if len(cum_df):
+                fig_cum.add_annotation(
+                    x=cum_df["Product"].iloc[-1],
+                    y=float(cum_df["Cumulative Contribution (SEK)"].iloc[-1]),
+                    xref="x", yref="y2",
+                    text=f"Breakeven not reached. Shortfall: {shortfall:,.0f} SEK",
+                    showarrow=False,
+                    xanchor="right"
+                )
 
         fig_cum.update_layout(
             title="Cumulative Contribution (clean breakeven view)",
@@ -342,7 +385,6 @@ with right:
         st.plotly_chart(fig_cum, use_container_width=True)
 
     else:
-        # Simple profit by product
         fig_profit = px.bar(
             chart_df,
             x="Product",
@@ -352,7 +394,6 @@ with right:
         fig_profit.update_layout(xaxis_tickangle=-35, height=440, margin=dict(l=20, r=20, t=60, b=120))
         st.plotly_chart(fig_profit, use_container_width=True)
 
-    # Waterfall: Revenue -> Variable Cost -> Fixed Cost -> Net Profit
     fig_wf = go.Figure(go.Waterfall(
         orientation="v",
         measure=["absolute", "relative", "relative", "total"],
@@ -369,7 +410,6 @@ with right:
     )
     st.plotly_chart(fig_wf, use_container_width=True)
 
-    # Pareto: Bars = contribution profit, Line = cumulative profit (SEK) - keep clean (no dashed line)
     pareto = chart_df[["Product", "Contribution Profit (SEK)"]].copy()
     pareto = pareto[pareto["Contribution Profit (SEK)"] > 0].sort_values("Contribution Profit (SEK)", ascending=False)
 
@@ -391,7 +431,6 @@ with right:
             yaxis="y2",
         ))
 
-        # Highlight breakeven product (if reached)
         cross = pareto.index[pareto["Cumulative Profit (SEK)"] >= fixed_cost].tolist()
         if cross:
             first_idx = cross[0]
@@ -401,19 +440,13 @@ with right:
             be_pos = xvals.index(be_prod)
             fig_par.add_vrect(
                 x0=be_pos - 0.5, x1=be_pos + 0.5,
-                fillcolor="lightgreen", opacity=0.18,
-                line_width=0
+                fillcolor="lightgreen", opacity=0.18, line_width=0
             )
             fig_par.add_annotation(
-                x=be_prod,
-                y=be_val,
-                xref="x",
-                yref="y2",
+                x=be_prod, y=be_val,
+                xref="x", yref="y2",
                 text=f"Breakeven at: {be_prod}",
-                showarrow=True,
-                arrowhead=2,
-                ax=20,
-                ay=-40,
+                showarrow=True, arrowhead=2, ax=20, ay=-40
             )
 
         fig_par.update_layout(
